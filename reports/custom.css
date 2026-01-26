@@ -1,0 +1,19 @@
+body {
+    font-family: Arial, sans-serif;
+}
+
+h1 {
+    color: #0B5ED7;
+}
+
+.passed {
+    background-color: #d4edda !important;
+}
+
+.failed {
+    background-color: #f8d7da !important;
+}
+
+.skipped {
+    background-color: #fff3cd !important;
+}
