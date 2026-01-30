@@ -1,6 +1,7 @@
 import os
 import re
 import pytest
+from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -16,10 +17,6 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    """
-    Add browser info to pytest-html metadata (Environment section).
-    This will show Browser: chrome/safari in the HTML report.
-    """
     browser = config.getoption("--browser")
     if hasattr(config, "_metadata"):
         config._metadata["Browser"] = browser
@@ -27,9 +24,6 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session")
 def browser_name(request):
-    """
-    Session-level fixture to capture the browser name.
-    """
     return request.config.getoption("--browser").lower()
 
 
@@ -44,22 +38,37 @@ def driver(browser_name):
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-notifications")
 
-        # ✅ Docker / Selenium Grid mode
+        # ================== GRID / DOCKER MODE ==================
         if remote_url:
-            driver = webdriver.Remote(command_executor=remote_url, options=options)
-            driver.set_window_size(1920, 1080)
-
-        # ✅ Local execution mode
-        else:
-            options.add_argument("--start-maximized")
-            driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
+            print(f"[INFO] Running on Selenium Grid: {remote_url}")
+            driver = webdriver.Remote(
+                command_executor=remote_url,
                 options=options
             )
+            driver.set_window_size(1920, 1080)
+
+        # ================== LOCAL MAC/WINDOWS MODE ==================
+        else:
+            print("[INFO] Running on Local Chrome")
+
+            driver_path = ChromeDriverManager().install()
+
+            # Fix Mac ARM issue where wrong file is picked
+            if "THIRD_PARTY" in driver_path:
+                driver_path = str(Path(driver_path).parent / "chromedriver")
+
+            # Ensure executable permission (Mac fix)
+            os.chmod(driver_path, 0o755)
+
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
+            driver.maximize_window()
 
     # ---------------------- SAFARI ----------------------
     elif browser_name == "safari":
-        # Safari works only locally on macOS
+        if remote_url:
+            raise ValueError("Safari does not support Selenium Grid. Run locally on macOS.")
+        print("[INFO] Running on Safari")
         driver = webdriver.Safari()
         driver.maximize_window()
 
@@ -70,12 +79,12 @@ def driver(browser_name):
     driver.quit()
 
 
+# ---------------------- SCREENSHOT IN HTML REPORT ----------------------
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
 
-    # Capture screenshot for setup or call failure
     if report.when in ("setup", "call") and report.failed:
         driver = item.funcargs.get("driver", None)
         if not driver:
@@ -85,10 +94,8 @@ def pytest_runtest_makereport(item, call):
 
         safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", item.nodeid)
         screenshot_path = os.path.join("screenshots", f"{safe_name}.png")
-
         driver.save_screenshot(screenshot_path)
 
-        # Attach screenshot into HTML report
         pytest_html = item.config.pluginmanager.getplugin("html")
         if pytest_html:
             extra = getattr(report, "extra", [])
